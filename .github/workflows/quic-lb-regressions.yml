@@ -38,7 +38,10 @@ jobs:
           source/extensions/quic/connection_id_generator/quic_lb/quic_lb.h \
           > "$RUNNER_TEMP/quic-lb-fixes.patch"
         git apply --reverse "$RUNNER_TEMP/quic-lb-fixes.patch"
-        options=(-c fastbuild --jobs=3 --noshow_progress --test_output=errors)
+        options=(
+          -c fastbuild --jobs=3 --test_output=errors
+          --show_progress --show_progress_rate_limit=30 --curses=no --color=no
+        )
         unit_targets=(
           //test/server:hot_restarting_child_test
           //test/extensions/quic/connection_id_generator/quic_lb:quic_lb_test
@@ -48,11 +51,11 @@ jobs:
         set +e
         bazel test "${options[@]}" \
           --test_filter="$regression_filter" \
-          "${unit_targets[@]}" > ci-regression-results/before-fixes.log 2>&1
-        before_status=$?
+          "${unit_targets[@]}" 2>&1 | tee ci-regression-results/before-fixes.log
+        before_status=("${PIPESTATUS[@]}")
         set -e
-        cat ci-regression-results/before-fixes.log
-        test "$before_status" -ne 0
+        test "${before_status[1]}" -eq 0
+        test "${before_status[0]}" -ne 0
         python3 - <<'PY'
         import pathlib
         import xml.etree.ElementTree as ET
@@ -74,7 +77,8 @@ jobs:
         PY
         git apply "$RUNNER_TEMP/quic-lb-fixes.patch"
         bazel test "${options[@]}" "${unit_targets[@]}" \
-          //test/extensions/quic/connection_id_generator/quic_lb:integration_test
+          //test/extensions/quic/connection_id_generator/quic_lb:integration_test \
+          2>&1 | tee ci-regression-results/after-fixes.log
         python3 - <<'PY'
         import pathlib
         import shutil
