@@ -1,0 +1,104 @@
+name: QUIC-LB targeted regressions
+
+on:
+  push:
+    branches:
+    - ci/quic-lb-regressions
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 16
+    - uses: bazel-contrib/setup-bazel@0.19.1
+      with:
+        bazelisk-cache: true
+    - name: Install build prerequisites
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libtool libxml2-dev libatomic1 python3-pip unzip
+        command -v bazel
+        df -h .
+    - name: Verify regressions fail before the fixes and pass afterward
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p ci-regression-results
+        base=aedd2c437990a143d73adf3eb08547cf2f4b32fb
+        git diff "$base" HEAD -- \
+          source/server/hot_restarting_child.cc \
+          source/extensions/quic/connection_id_generator/quic_lb/quic_lb.cc \
+          source/extensions/quic/connection_id_generator/quic_lb/quic_lb.h \
+          > "$RUNNER_TEMP/quic-lb-fixes.patch"
+        git apply --reverse "$RUNNER_TEMP/quic-lb-fixes.patch"
+        options=(-c fastbuild --jobs=3 --noshow_progress --test_output=errors)
+        unit_targets=(
+          //test/server:hot_restarting_child_test
+          //test/extensions/quic/connection_id_generator/quic_lb:quic_lb_test
+        )
+        regression_filter='HotRestartingChildTest.ShutdownReleasesUdpListenerConfigs'
+        regression_filter+=':EncryptionModes/QuicLbSecretUpdateTest.*'
+        set +e
+        bazel test "${options[@]}" \
+          --test_filter="$regression_filter" \
+          "${unit_targets[@]}" > ci-regression-results/before-fixes.log 2>&1
+        before_status=$?
+        set -e
+        cat ci-regression-results/before-fixes.log
+        test "$before_status" -ne 0
+        python3 - <<'PY'
+        import pathlib
+        import xml.etree.ElementTree as ET
+
+        paths = {
+            "shutdown": "test/server/hot_restarting_child_test",
+            "sds": "test/extensions/quic/connection_id_generator/quic_lb/quic_lb_test",
+        }
+        for name, path in paths.items():
+            result = pathlib.Path("bazel-testlogs") / path / "test.xml"
+            cases = list(ET.parse(result).getroot().iter("testcase"))
+            assert cases, f"{name}: no regression tests executed"
+            assert any(case.find("failure") is not None for case in cases), (
+                f"{name}: expected an assertion failure, not a build failure or zero tests"
+            )
+            (pathlib.Path("ci-regression-results") / f"{name}-before.xml").write_bytes(
+                result.read_bytes()
+            )
+        PY
+        git apply "$RUNNER_TEMP/quic-lb-fixes.patch"
+        bazel test "${options[@]}" "${unit_targets[@]}" \
+          //test/extensions/quic/connection_id_generator/quic_lb:integration_test
+        python3 - <<'PY'
+        import pathlib
+        import shutil
+        import xml.etree.ElementTree as ET
+
+        paths = [
+            "test/server/hot_restarting_child_test",
+            "test/extensions/quic/connection_id_generator/quic_lb/quic_lb_test",
+            "test/extensions/quic/connection_id_generator/quic_lb/integration_test",
+        ]
+        for path in paths:
+            directory = pathlib.Path("bazel-testlogs") / path
+            cases = list(ET.parse(directory / "test.xml").getroot().iter("testcase"))
+            assert cases, f"{path}: no tests executed"
+            assert all(case.find("failure") is None for case in cases)
+            for suffix in ("xml", "log"):
+                shutil.copyfile(
+                    directory / f"test.{suffix}",
+                    pathlib.Path("ci-regression-results") / f"{directory.name}-after.{suffix}",
+                )
+        PY
+    - name: Upload regression evidence
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: quic-lb-regressions-linux
+        path: ci-regression-results/
