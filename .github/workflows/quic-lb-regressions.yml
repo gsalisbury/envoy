@@ -44,7 +44,7 @@ jobs:
           //test/extensions/quic/connection_id_generator/quic_lb:quic_lb_test
         )
         regression_filter='HotRestartingChildTest.ShutdownReleasesUdpListenerConfigs'
-        regression_filter+=':EncryptionModes/QuicLbSecretUpdateTest.*'
+        regression_filter+=':EncryptionModes/QuicLbSecretUpdateTest.SameVersionWithDifferentKeyIsRejected/*'
         set +e
         bazel test "${options[@]}" \
           --test_filter="$regression_filter" \
