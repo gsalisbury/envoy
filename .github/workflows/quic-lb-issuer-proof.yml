@@ -1,0 +1,53 @@
+name: QUIC-LB issuer proof prerequisite
+
+on:
+  push:
+    branches:
+    - quic-lb-issuer-proof-20261103
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quic-lb-issuer-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ENVOY_DOCKER_BUILD_DIR: /tmp/envoy-quic-build
+  ENVOY_DOCKER_CPUS: '2'
+  NUM_CPUS: '2'
+  BAZEL_BUILD_EXTRA_OPTIONS: --jobs=2 --local_resources=memory=6144 --test_output=errors
+
+jobs:
+  format:
+    if: github.repository == 'gsalisbury/envoy'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - name: Check pinned Envoy formatting and lint
+      run: ./ci/run_envoy_docker.sh './ci/do_ci.sh format'
+
+  linux-tests:
+    if: github.repository == 'gsalisbury/envoy'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - name: Build and run QUIC-LB unit and integration tests
+      run: >-
+        ./ci/run_envoy_docker.sh
+        './ci/do_ci.sh release.test_only
+        //test/extensions/quic/connection_id_generator/quic_lb:quic_lb_test
+        //test/extensions/quic/connection_id_generator/quic_lb:integration_test'
+    - name: Preserve Bazel test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: quic-lb-linux-test-results
+        path: /tmp/envoy-quic-build/**/testlogs/**/test.*
+        if-no-files-found: warn

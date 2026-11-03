@@ -8,6 +8,7 @@
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "quiche/quic/platform/api/quic_expect_bug.h"
 #include "quiche/quic/platform/api/quic_test.h"
 #include "quiche/quic/test_tools/quic_test_utils.h"
 
@@ -16,6 +17,13 @@ namespace Quic {
 namespace Extensions {
 namespace ConnectionIdGenerator {
 namespace QuicLb {
+
+class QuicLbThreadLocalDataPeer {
+public:
+  static void deleteConfig(QuicLbConnectionIdGenerator::ThreadLocalData& data) {
+    data.encoder_.DeleteConfig();
+  }
+};
 
 namespace {
 
@@ -266,6 +274,71 @@ TEST(QuicLbTest, InvalidConfig) {
       "'server_id' length (7) and 'nonce_length_bytes' (12) combined must be 18 bytes or less.");
 }
 
+class QuicLbEncoderObservationTest : public testing::Test {
+protected:
+  void SetUp() override { initialize(false); }
+
+  void initialize(bool unencrypted) {
+    envoy::extensions::quic::connection_id_generator::quic_lb::v3::Config config;
+    config.set_unencrypted_mode(unencrypted);
+    config.set_nonce_length_bytes(13);
+    auto result = QuicLbConnectionIdGenerator::ThreadLocalData::create(config, "sid");
+    ASSERT_TRUE(result.ok());
+    data_ = result.value();
+  }
+
+  std::shared_ptr<QuicLbConnectionIdGenerator::ThreadLocalData> data_;
+};
+
+TEST_F(QuicLbEncoderObservationTest, EffectiveStateFollowsSuccessfulInstallation) {
+  EXPECT_FALSE(data_->currentEncoderConfig().has_value());
+  ASSERT_OK(data_->updateKeyAndVersion("0123456789abcdef", 0));
+  auto first = data_->currentEncoderConfig();
+  ASSERT_TRUE(first.has_value());
+  EXPECT_EQ(first->config_id, 0);
+  EXPECT_TRUE(first->encrypted);
+  EXPECT_EQ(first->key_fingerprint, "036d3d7cee2e2b0a");
+
+  ASSERT_OK(data_->updateKeyAndVersion("fedcba9876543210", 1));
+  auto second = data_->currentEncoderConfig();
+  ASSERT_TRUE(second.has_value());
+  EXPECT_EQ(second->config_id, 1);
+  EXPECT_TRUE(second->encrypted);
+  EXPECT_EQ(second->key_fingerprint, "f9f1c7236d23b06c");
+}
+
+TEST_F(QuicLbEncoderObservationTest, RejectedSameIdDoesNotPublishDesiredKey) {
+  ASSERT_OK(data_->updateKeyAndVersion("0123456789abcdef", 0));
+  absl::Status status;
+  EXPECT_QUIC_BUG(status = data_->updateKeyAndVersion("fedcba9876543210", 0),
+                  "Attempting to change config with same ID");
+  EXPECT_FALSE(status.ok());
+  auto current = data_->currentEncoderConfig();
+  ASSERT_TRUE(current.has_value());
+  EXPECT_EQ(current->config_id, 0);
+  EXPECT_EQ(current->key_fingerprint, "036d3d7cee2e2b0a");
+}
+
+TEST_F(QuicLbEncoderObservationTest, DeletedConfigDoesNotReturnStaleMetadata) {
+  ASSERT_OK(data_->updateKeyAndVersion("0123456789abcdef", 0));
+  QuicLbThreadLocalDataPeer::deleteConfig(*data_);
+  EXPECT_FALSE(data_->currentEncoderConfig().has_value());
+  ASSERT_OK(data_->updateKeyAndVersion("fedcba9876543210", 0));
+  auto current = data_->currentEncoderConfig();
+  ASSERT_TRUE(current.has_value());
+  EXPECT_EQ(current->key_fingerprint, "f9f1c7236d23b06c");
+}
+
+TEST_F(QuicLbEncoderObservationTest, PlaintextDoesNotFingerprintUnusedKeyMaterial) {
+  initialize(true);
+  ASSERT_OK(data_->updateKeyAndVersion("0123456789abcdef", 4));
+  auto current = data_->currentEncoderConfig();
+  ASSERT_TRUE(current.has_value());
+  EXPECT_EQ(current->config_id, 4);
+  EXPECT_FALSE(current->encrypted);
+  EXPECT_EQ(current->key_fingerprint, "plaintext");
+}
+
 // Validate that the server ID is present in plaintext when `unencrypted_mode`
 // is enabled.
 TEST(QuicLbTest, Unencrypted) {
@@ -283,6 +356,10 @@ TEST(QuicLbTest, Unencrypted) {
   absl::StatusOr<std::unique_ptr<Factory>> factory_or_status =
       Factory::create(cfg, factory_context);
   auto generator = createTypedIdGenerator(*factory_or_status.value());
+  auto observed = generator->currentEncoderConfig();
+  ASSERT_TRUE(observed.has_value());
+  EXPECT_FALSE(observed->encrypted);
+  EXPECT_EQ(observed->key_fingerprint, "plaintext");
   auto new_cid = generator->GenerateNextConnectionId(quic::QuicConnectionId{});
   EXPECT_TRUE(new_cid.has_value());
   uint8_t expected[1 + sizeof(id_data)];

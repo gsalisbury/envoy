@@ -22,6 +22,12 @@ using WorkerRoutingIdValue = uint8_t;
 
 class QuicLbConnectionIdGenerator : public quic::ConnectionIdGeneratorInterface {
 public:
+  struct EncoderConfig {
+    uint8_t config_id;
+    bool encrypted;
+    std::string key_fingerprint;
+  };
+
   class ThreadLocalData : public ThreadLocal::ThreadLocalObject {
   public:
     static absl::StatusOr<std::shared_ptr<ThreadLocalData>>
@@ -30,13 +36,19 @@ public:
 
     absl::Status updateKeyAndVersion(absl::string_view key, uint8_t version);
 
-    quic::LoadBalancerEncoder encoder_;
+    // Must be called on the owning thread. This is not a listener/worker/epoch coverage proof.
+    std::optional<EncoderConfig> currentEncoderConfig() const;
 
   private:
+    friend class QuicLbConnectionIdGenerator;
+    friend class QuicLbThreadLocalDataPeer;
+
     ThreadLocalData(
         const envoy::extensions::quic::connection_id_generator::quic_lb::v3::Config& config,
         absl::string_view server_id);
 
+    quic::LoadBalancerEncoder encoder_;
+    std::optional<EncoderConfig> installed_config_;
     const bool unencrypted_mode_;
     const uint32_t nonce_length_bytes_;
     const quic::LoadBalancerServerId server_id_;
@@ -53,6 +65,9 @@ public:
   uint8_t ConnectionIdLength(uint8_t first_byte) const override;
 
   bool IsEncrypted() const override { return false; }
+
+  // Observes this worker's effective encoder, not the desired SDS secret.
+  std::optional<EncoderConfig> currentEncoderConfig() const;
 
   std::optional<quic::QuicConnectionId> appendRoutingId(quic::QuicConnectionId& new_connection_id);
 

@@ -3,7 +3,9 @@
 #include "envoy/server/transport_socket_config.h"
 
 #include "source/common/common/base64.h"
+#include "source/common/common/hex.h"
 #include "source/common/config/datasource.h"
+#include "source/common/crypto/utility.h"
 #include "source/common/network/socket_option_impl.h"
 #include "source/common/quic/envoy_quic_utils.h"
 
@@ -46,6 +48,11 @@ QuicLbConnectionIdGenerator::MaybeReplaceConnectionId(const quic::QuicConnection
 
 uint8_t QuicLbConnectionIdGenerator::ConnectionIdLength(uint8_t first_byte) const {
   return tls_slot_->encoder_.ConnectionIdLength(first_byte) + sizeof(WorkerRoutingIdValue);
+}
+
+std::optional<QuicLbConnectionIdGenerator::EncoderConfig>
+QuicLbConnectionIdGenerator::currentEncoderConfig() const {
+  return tls_slot_->currentEncoderConfig();
 }
 
 std::optional<quic::QuicConnectionId>
@@ -121,7 +128,25 @@ QuicLbConnectionIdGenerator::ThreadLocalData::updateKeyAndVersion(absl::string_v
     return absl::InvalidArgumentError("Error setting configuration of quic-lb CID encoder");
   }
 
+  std::string fingerprint = "plaintext";
+  if (encoder_.IsEncrypted()) {
+    constexpr char domain[] = "katrand quic-lb key";
+    std::string input(domain, sizeof(domain));
+    input.append(key.data(), key.size());
+    fingerprint =
+        Hex::encode(Common::Crypto::UtilitySingleton::get().getSha256Digest(input)).substr(0, 16);
+  }
+  installed_config_ = EncoderConfig{version, encoder_.IsEncrypted(), std::move(fingerprint)};
   return absl::OkStatus();
+}
+
+std::optional<QuicLbConnectionIdGenerator::EncoderConfig>
+QuicLbConnectionIdGenerator::ThreadLocalData::currentEncoderConfig() const {
+  // Nonce exhaustion deletes the live config without going through updateKeyAndVersion().
+  if (!encoder_.IsEncoding()) {
+    return std::nullopt;
+  }
+  return installed_config_;
 }
 
 namespace {

@@ -20,7 +20,9 @@ envoy_cc_library(
     hdrs = envoy_select_enable_http3(["quic_lb.h"]),
     deps = envoy_select_enable_http3([
         "//source/common/common:base64_lib",
+        "//source/common/common:hex_lib",
         "//source/common/config:datasource_lib",
+        "//source/common/crypto:utility_lib",
         "//source/common/quic:envoy_quic_connection_id_generator_factory_interface",
         "//source/common/quic:envoy_quic_utils_lib",
         "@quiche//:quic_load_balancer_config_lib",
