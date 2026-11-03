@@ -130,7 +130,7 @@ QuicLbConnectionIdGenerator::ThreadLocalData::updateKeyAndVersion(absl::string_v
 
   std::string fingerprint = "plaintext";
   if (encoder_.IsEncrypted()) {
-    constexpr char domain[] = "katrand quic-lb key";
+    constexpr char domain[] = "loadbalancer quic-lb key";
     std::string input(domain, sizeof(domain));
     input.append(key.data(), key.size());
     fingerprint =

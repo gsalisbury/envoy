@@ -297,14 +297,14 @@ TEST_F(QuicLbEncoderObservationTest, EffectiveStateFollowsSuccessfulInstallation
   ASSERT_TRUE(first.has_value());
   EXPECT_EQ(first->config_id, 0);
   EXPECT_TRUE(first->encrypted);
-  EXPECT_EQ(first->key_fingerprint, "036d3d7cee2e2b0a");
+  EXPECT_EQ(first->key_fingerprint, "684e55bc2ee4b237");
 
   ASSERT_OK(data_->updateKeyAndVersion("fedcba9876543210", 1));
   auto second = data_->currentEncoderConfig();
   ASSERT_TRUE(second.has_value());
   EXPECT_EQ(second->config_id, 1);
   EXPECT_TRUE(second->encrypted);
-  EXPECT_EQ(second->key_fingerprint, "f9f1c7236d23b06c");
+  EXPECT_EQ(second->key_fingerprint, "cd6fbb6bf0177533");
 }
 
 TEST_F(QuicLbEncoderObservationTest, RejectedSameIdDoesNotPublishDesiredKey) {
@@ -316,7 +316,7 @@ TEST_F(QuicLbEncoderObservationTest, RejectedSameIdDoesNotPublishDesiredKey) {
   auto current = data_->currentEncoderConfig();
   ASSERT_TRUE(current.has_value());
   EXPECT_EQ(current->config_id, 0);
-  EXPECT_EQ(current->key_fingerprint, "036d3d7cee2e2b0a");
+  EXPECT_EQ(current->key_fingerprint, "684e55bc2ee4b237");
 }
 
 TEST_F(QuicLbEncoderObservationTest, DeletedConfigDoesNotReturnStaleMetadata) {
@@ -326,7 +326,7 @@ TEST_F(QuicLbEncoderObservationTest, DeletedConfigDoesNotReturnStaleMetadata) {
   ASSERT_OK(data_->updateKeyAndVersion("fedcba9876543210", 0));
   auto current = data_->currentEncoderConfig();
   ASSERT_TRUE(current.has_value());
-  EXPECT_EQ(current->key_fingerprint, "f9f1c7236d23b06c");
+  EXPECT_EQ(current->key_fingerprint, "cd6fbb6bf0177533");
 }
 
 TEST_F(QuicLbEncoderObservationTest, PlaintextDoesNotFingerprintUnusedKeyMaterial) {
